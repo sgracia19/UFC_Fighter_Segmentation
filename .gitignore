@@ -1,0 +1,8 @@
+# Virtual environment
+venv/
+# Python cache files
+__pycache__/
+# Python bytecode files
+*.pyc
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
