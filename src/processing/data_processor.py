@@ -91,13 +91,17 @@ class UFCDataProcessor:
             return 'Other'
         method = str(method).strip()
 
-        if method in ["KO", "TKO", "TKO - Doctor's Stoppage", "Could Not Continue"]:
+        if 'KO' in method or 'TKO' in method:
             return 'KO/TKO'
         elif 'Submission' in method:
             return 'Submission'
         elif 'Decision' in method:
             return 'Decision'
-        else :
+        elif method in ['Could Not Continue', "TKO - Doctor's Stoppage"]:
+            return 'Stoppage'
+        elif method in ['DQ', 'Overturned']:
+            return 'DQ/Overturned'
+        else:
             return 'Other'
     
     def aggregate_fighter_stats(self, fighter_df: pd.DataFrame) -> pd.DataFrame:
@@ -195,6 +199,10 @@ class UFCDataProcessor:
             'win': 'UFC_wins', 
             'loss': 'UFC_losses'
         })
+
+        # Drop columns that are not needed for analysis or have too many missing values
+        cols_to_drop = ['wins', 'losses', 'draws']
+        fighter_stats.drop(columns=cols_to_drop, inplace=True)
         
         logger.info(f"Aggregated data for {len(fighter_stats)} fighters")
         
