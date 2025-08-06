@@ -10,12 +10,11 @@ import numpy as np
 from typing import Tuple, Optional
 import logging
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class UFCDataProcessor:
-    """Main class for processing UFC fighter data."""
+    """Simplified processor focusing on binary win/loss outcomes."""
 
     def __init__(self, data_path: str = 'data/raw/'):
         """
@@ -29,16 +28,29 @@ class UFCDataProcessor:
         self.fighter_details = None
         self.fight_details = None
         self.processed_data = None
+        
+        # Simplified method categories
+        self.method_categories = [
+            'ko_tko', 'submission', 'decision', 'other'
+        ]
+        
         logger.info(f"DataProcessor initialized with data path: {data_path}")
 
     def load_raw_data(self) -> None:
-        """ Load raw data files into pandas DataFrames. """
+        """Load raw data files into pandas DataFrames."""
         try:
-            self.event_details = pd.read_csv(f"{self.data_path}event_details.csv")
-            self.fighter_details = pd.read_csv(f"{self.data_path}fighter_details.csv")
-            self.fight_details = pd.read_csv(f"{self.data_path}fight_details.csv")
+            self.event_details = pd.read_csv(f"{self.data_path}event_details.csv", low_memory=False)
+            self.fighter_details = pd.read_csv(f"{self.data_path}fighter_details.csv", low_memory=False)
+            self.fight_details = pd.read_csv(f"{self.data_path}fight_details.csv", low_memory=False)
+            
             logger.info("Data loaded successfully. {} events, {} fighters, {} fights.".format(
                 len(self.event_details), len(self.fighter_details), len(self.fight_details)))
+            
+            # Log how many null winner_ids we have
+            null_winners = self.event_details['winner_id'].isna().sum()
+            total_fights = len(self.event_details)
+            logger.info(f"Found {null_winners} fights ({null_winners/total_fights*100:.2f}%) with null winner_id - these will be excluded")
+            
         except Exception as e:
             logger.error(f"Error loading data files: {e}")
             raise
@@ -50,77 +62,130 @@ class UFCDataProcessor:
         Returns:
             DataFrame with one row per fighter per fight
         """
-        logger.info("Preparing fight-level data...")
+        logger.info("Preparing fight-level data with binary outcomes only...")
 
-        # Merge fight details with event details to get winner information
+        # Merge fight details with event details
         fights_with_winners = self.fight_details.merge(
             self.event_details[['winner', 'winner_id', 'fight_id', 'date']],
             on='fight_id'
         )
+        
+        # Filter out fights with no clear winner (null winner_id)
+        initial_count = len(fights_with_winners)
+        fights_with_winners = fights_with_winners[fights_with_winners['winner_id'].notna()]
+        excluded_count = initial_count - len(fights_with_winners)
+        
+        logger.info(f"Excluded {excluded_count} fights with non-binary outcomes (draws/no contests/etc.)")
 
-        # Create red corner and blue corner dataframes
-        fights_with_winners['r_win'] = np.where(fights_with_winners['winner_id'] == fights_with_winners['r_id'], 1, 0)
-        fights_with_winners['b_win'] = np.where(fights_with_winners['winner_id'] == fights_with_winners['b_id'], 1, 0)
-        fights_with_winners['r_loss'] = np.where(fights_with_winners['winner_id'] == fights_with_winners['b_id'], 1, 0)
-        fights_with_winners['b_loss'] = np.where(fights_with_winners['winner_id'] == fights_with_winners['r_id'], 1, 0)
+        # Create binary win/loss indicators
+        fights_with_winners['r_win'] = np.where(
+            fights_with_winners['winner_id'] == fights_with_winners['r_id'], 1, 0
+        )
+        fights_with_winners['b_win'] = np.where(
+            fights_with_winners['winner_id'] == fights_with_winners['b_id'], 1, 0
+        )
+        fights_with_winners['r_loss'] = np.where(
+            fights_with_winners['winner_id'] == fights_with_winners['b_id'], 1, 0
+        )
+        fights_with_winners['b_loss'] = np.where(
+            fights_with_winners['winner_id'] == fights_with_winners['r_id'], 1, 0
+        )
 
         # Split into red and blue corner dataframes
-        red_fighter_df = fights_with_winners.drop(columns = [col for col in fights_with_winners.columns if 'b_' in col])
-        blue_fighter_df = fights_with_winners.drop(columns = [col for col in fights_with_winners.columns if 'r_' in col])
+        red_fighter_df = fights_with_winners.drop(columns=[
+            col for col in fights_with_winners.columns if 'b_' in col
+        ])
+        blue_fighter_df = fights_with_winners.drop(columns=[
+            col for col in fights_with_winners.columns if 'r_' in col
+        ])
 
-        # Rename columns for clarity
-        red_fighter_df.columns  = [col.replace('r_', '') for col in red_fighter_df.columns]
+        # Rename columns
+        red_fighter_df.columns = [col.replace('r_', '') for col in red_fighter_df.columns]
         blue_fighter_df.columns = [col.replace('b_', '') for col in blue_fighter_df.columns]
 
         # Combine datasets
         fighter_df = pd.concat([red_fighter_df, blue_fighter_df], ignore_index=True)
-        fighter_df = fighter_df.loc[:, ~fighter_df.columns.duplicated()]  # Remove duplicate columns
+        fighter_df = fighter_df.loc[:, ~fighter_df.columns.duplicated()]
 
         # Clean up columns
-        cols_to_drop = ['event_name', 'event_id', 'title_fight', 'referee',
-                         'winner' , 'winneid', 'date','finish_round']
-        fighter_df.drop(cols_to_drop, axis=1, inplace = True)
+        cols_to_drop = [
+            'event_name', 'event_id', 'title_fight', 'referee',
+            'winner', 'winneid', 'date', 'finish_round'
+        ]
+        cols_to_drop = [col for col in cols_to_drop if col in fighter_df.columns]
+        fighter_df.drop(cols_to_drop, axis=1, inplace=True)
 
-        logger.info(f"Prepared fighter-level data with {len(fighter_df)} records.")
+        logger.info(f"Prepared fighter-level data with {len(fighter_df)} records from binary outcomes")
         return fighter_df
-    
-    @staticmethod
-    def categorize_method(method:str) -> str:
-        """ Method to categorize fight finish methods. """
-        if pd.isna(method):
-            return 'Other'
-        method = str(method).strip()
 
-        if 'KO' in method or 'TKO' in method:
-            return 'KO/TKO'
-        elif 'Submission' in method:
-            return 'Submission'
-        elif 'Decision' in method:
-            return 'Decision'
-        elif method in ['Could Not Continue', "TKO - Doctor's Stoppage"]:
-            return 'Stoppage'
-        elif method in ['DQ', 'Overturned']:
-            return 'DQ/Overturned'
+    @staticmethod
+    def categorize_method(method: str) -> str:
+        """Simplified method categorization focusing on main finish types."""
+        if pd.isna(method):
+            return 'other'
+        
+        method = str(method).strip().lower()
+
+        # KO/TKO category (including all stoppages)
+        if any(x in method for x in ['ko', 'tko', 'doctor', 'stoppage']):
+            return 'ko_tko'
+        
+        # Submission category
+        elif 'submission' in method:
+            return 'submission'
+        
+        # Decision category (all types)
+        elif 'decision' in method:
+            return 'decision'
+        
+        # Everything else (DQ, Could not continue, etc.)
         else:
-            return 'Other'
-    
+            return 'other'
+
+    def create_method_columns(self, fighter_stats: pd.DataFrame, 
+                            wins_by_method: pd.DataFrame, 
+                            losses_by_method: pd.DataFrame) -> pd.DataFrame:
+        """Ensure all method categories have corresponding win/loss columns."""
+        logger.info("Creating method columns...")
+        
+        for category in self.method_categories:
+            win_col = f'wins_by_{category}'
+            loss_col = f'losses_by_{category}'
+            
+            # Add wins column
+            if win_col in wins_by_method.columns:
+                fighter_stats = fighter_stats.merge(
+                    wins_by_method[[win_col]], 
+                    left_on='id', right_index=True, how='left'
+                )
+                fighter_stats[win_col] = fighter_stats[win_col].fillna(0)
+            else:
+                fighter_stats[win_col] = 0
+                
+            # Add losses column
+            if loss_col in losses_by_method.columns:
+                fighter_stats = fighter_stats.merge(
+                    losses_by_method[[loss_col]], 
+                    left_on='id', right_index=True, how='left'
+                )
+                fighter_stats[loss_col] = fighter_stats[loss_col].fillna(0)
+            else:
+                fighter_stats[loss_col] = 0
+        
+        return fighter_stats
+
     def aggregate_fighter_stats(self, fighter_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Aggregate fight-level data to compute cumulative fighter statistics.
-        
-        Parameters:
-            fighter_df (DataFrame): DataFrame with one row per fighter per fight.
-        
-        Returns:
-            DataFrame with aggregated fighter statistics.
-        """
+        """Aggregate fight-level data to fighter statistics."""
         logger.info("Aggregating fighter statistics...")
         
         # Add method categories
         df_copy = fighter_df.copy()
         df_copy['method_category'] = df_copy['method'].apply(self.categorize_method)
+        
+        # Debug info
+        logger.info(f"Method categories found: {df_copy['method_category'].unique()}")
 
-        # Define aggregation functions
+        # Aggregation dictionary
         agg_dict = {
             # Basic fight information
             'fight_id': 'count',  # Total number of fights
@@ -174,119 +239,59 @@ class UFCDataProcessor:
             'division': 'last',  # Use last in case fighter changed divisions
         }
 
+        # Group by fighter and aggregate
         fighter_stats = df_copy.groupby('id').agg(agg_dict).reset_index()
 
-        # Add win/loss by method features
+        # Create win/loss by method breakdown
         wins_by_method = df_copy[df_copy['win'] == 1].groupby(['id', 'method_category']).size().unstack(fill_value=0)
-        wins_by_method.columns = [f'wins_by_{col.lower().replace("/", "_").replace(" ", "_")}' 
-                                 for col in wins_by_method.columns]
+        wins_by_method.columns = [f'wins_by_{col}' for col in wins_by_method.columns]
         
         losses_by_method = df_copy[df_copy['loss'] == 1].groupby(['id', 'method_category']).size().unstack(fill_value=0)
-        losses_by_method.columns = [f'losses_by_{col.lower().replace("/", "_").replace(" ", "_")}' 
-                                   for col in losses_by_method.columns]
+        losses_by_method.columns = [f'losses_by_{col}' for col in losses_by_method.columns]
         
-        # Merge method breakdowns
-        fighter_stats = fighter_stats.merge(wins_by_method, left_on='id', right_index=True, how='left')
-        fighter_stats = fighter_stats.merge(losses_by_method, left_on='id', right_index=True, how='left')
+        # Add method columns
+        fighter_stats = self.create_method_columns(fighter_stats, wins_by_method, losses_by_method)
         
-        # Fill NaN values for method columns
-        method_columns = [col for col in fighter_stats.columns if 'wins_by_' in col or 'losses_by_' in col]
-        fighter_stats[method_columns] = fighter_stats[method_columns].fillna(0)
-        
-        # Rename fight count column and win/loss columns for clarity
+        # Rename columns for clarity
         fighter_stats = fighter_stats.rename(columns={
             'fight_id': 'total_UFC_fights',
             'win': 'UFC_wins', 
             'loss': 'UFC_losses'
         })
-
-        # Drop columns that are not needed for analysis or have too many missing values
-        cols_to_drop = ['wins', 'losses', 'draws']
-        fighter_stats.drop(columns=cols_to_drop, inplace=True)
         
         logger.info(f"Aggregated data for {len(fighter_stats)} fighters")
-        
         return fighter_stats
 
     def calculate_derived_metrics(self, fighter_stats: pd.DataFrame) -> pd.DataFrame:
-        """
-        Calculate derived metrics such as accuracy percentages and average fight time.
-        
-        Parameters:
-            fighter_stats (DataFrame): DataFrame with aggregated fighter statistics.
-        
-        Returns:
-            DataFrame with additional derived metrics.
-        """
+        """Calculate derived metrics from aggregated stats."""
         logger.info("Calculating derived metrics...")
 
         # Accuracy percentages
-        fighter_stats['career_sig_st_acc'] = np.where(
-            fighter_stats['sig_statmpted'] > 0,
-            (fighter_stats['sig_stlanded'] / fighter_stats['sig_statmpted']) * 100,
-            0
-        )
+        accuracy_metrics = [
+            ('career_sig_st_acc', 'sig_stlanded', 'sig_statmpted'),
+            ('career_total_st_acc', 'total_stlanded', 'total_statmpted'),
+            ('career_td_acc', 'td_landed', 'td_atmpted'),
+            ('career_head_acc', 'head_landed', 'head_atmpted'),
+            ('career_body_acc', 'body_landed', 'body_atmpted'),
+            ('career_leg_acc', 'leg_landed', 'leg_atmpted'),
+            ('career_dist_acc', 'dist_landed', 'dist_atmpted'),
+            ('career_clinch_acc', 'clinch_landed', 'clinch_atmpted'),
+            ('career_ground_acc', 'ground_landed', 'ground_atmpted'),
+        ]
         
-        fighter_stats['career_total_st_acc'] = np.where(
-            fighter_stats['total_statmpted'] > 0,
-            (fighter_stats['total_stlanded'] / fighter_stats['total_statmpted']) * 100,
-            0
-        )
-        
-        fighter_stats['career_td_acc'] = np.where(
-            fighter_stats['td_atmpted'] > 0,
-            (fighter_stats['td_landed'] / fighter_stats['td_atmpted']) * 100,
-            0
-        )
-        
-        fighter_stats['career_head_acc'] = np.where(
-            fighter_stats['head_atmpted'] > 0,
-            (fighter_stats['head_landed'] / fighter_stats['head_atmpted']) * 100,
-            0
-        )
-        
-        fighter_stats['career_body_acc'] = np.where(
-            fighter_stats['body_atmpted'] > 0,
-            (fighter_stats['body_landed'] / fighter_stats['body_atmpted']) * 100,
-            0
-        )
-        
-        fighter_stats['career_leg_acc'] = np.where(
-            fighter_stats['leg_atmpted'] > 0,
-            (fighter_stats['leg_landed'] / fighter_stats['leg_atmpted']) * 100,
-            0
-        )
-        
-        fighter_stats['career_dist_acc'] = np.where(
-            fighter_stats['dist_atmpted'] > 0,
-            (fighter_stats['dist_landed'] / fighter_stats['dist_atmpted']) * 100,
-            0
-        )
-        
-        fighter_stats['career_clinch_acc'] = np.where(
-            fighter_stats['clinch_atmpted'] > 0,
-            (fighter_stats['clinch_landed'] / fighter_stats['clinch_atmpted']) * 100,
-            0
-        )
-        
-        fighter_stats['career_ground_acc'] = np.where(
-            fighter_stats['ground_atmpted'] > 0,
-            (fighter_stats['ground_landed'] / fighter_stats['ground_atmpted']) * 100,
-            0
-        )
-        
-        # Per-minute rates (using total fight time)
+        for acc_name, landed_col, attempted_col in accuracy_metrics:
+            fighter_stats[acc_name] = np.where(
+                fighter_stats[attempted_col] > 0,
+                (fighter_stats[landed_col] / fighter_stats[attempted_col]) * 100,
+                0
+            )
+
+        # Per-minute rates
         fighter_stats['sig_st_landed_per_min'] = np.where(
             fighter_stats['match_time_sec'] > 0,
             (fighter_stats['sig_stlanded'] / fighter_stats['match_time_sec']) * 60,
             0
         )
-        
-        # fighter_stats['sig_st_absorbed_per_min'] = np.where(
-        #     fighter_stats['match_time_sec'] > 0,
-        #     (fighter_stats['sig_stlanded'] / fighter_stats['match_time_sec']) * 60,  # This would need opponent data
-        #     0
-        # )
         
         fighter_stats['td_landed_per_min'] = np.where(
             fighter_stats['match_time_sec'] > 0,
@@ -299,164 +304,125 @@ class UFCDataProcessor:
             (fighter_stats['kd'] / fighter_stats['match_time_sec']) * 60,
             0
         )
-        
-        # Average fight time
+
+        # Basic metrics
         fighter_stats['avg_fight_time_sec'] = fighter_stats['match_time_sec'] / fighter_stats['total_UFC_fights']
-        
-        # Win percentage
         fighter_stats['win_percentage'] = (fighter_stats['UFC_wins'] / fighter_stats['total_UFC_fights']) * 100
-        
-        # Calculate finish rates (useful for clustering)
+
+        # Finish rates
         fighter_stats['finish_rate'] = np.where(
             fighter_stats['total_UFC_fights'] > 0,
-            ((fighter_stats.get('wins_by_ko_tko', 0) + 
-            fighter_stats.get('wins_by_submission', 0)) / fighter_stats['total_UFC_fights']) * 100,
+            ((fighter_stats['wins_by_ko_tko'] + fighter_stats['wins_by_submission']) / 
+             fighter_stats['total_UFC_fights']) * 100,
             0
         )
-        
-        fighter_stats['ko_tko_rate'] = np.where(
-            fighter_stats['total_UFC_fights'] > 0,
-            (fighter_stats.get('wins_by_ko_tko', 0) / fighter_stats['total_UFC_fights']) * 100,
-            0
-        )
-        
-        fighter_stats['submission_rate'] = np.where(
-            fighter_stats['total_UFC_fights'] > 0,
-            (fighter_stats.get('wins_by_submission', 0) / fighter_stats['total_UFC_fights']) * 100,
-            0
-        )
-        
-        fighter_stats['decision_rate'] = np.where(
-            fighter_stats['total_UFC_fights'] > 0,
-            (fighter_stats.get('wins_by_decision', 0) / fighter_stats['total_UFC_fights']) * 100,
-            0
-        )
-        
-        # Calculate loss vulnerability rates
-        fighter_stats['ko_tko_vulnerability'] = np.where(
-            fighter_stats['total_UFC_fights'] > 0,
-            (fighter_stats.get('losses_by_ko_tko', 0) / fighter_stats['total_UFC_fights']) * 100,
-            0
-        )
-        
-        fighter_stats['submission_vulnerability'] = np.where(
-            fighter_stats['total_UFC_fights'] > 0,
-            (fighter_stats.get('losses_by_submission', 0) / fighter_stats['total_UFC_fights']) * 100,
-            0
-        )
-        
-        # Strike distribution percentages (of total strikes landed)
+
+        # Method-specific rates
+        for method in self.method_categories:
+            # Win rates
+            fighter_stats[f'{method}_win_rate'] = np.where(
+                fighter_stats['total_UFC_fights'] > 0,
+                (fighter_stats[f'wins_by_{method}'] / fighter_stats['total_UFC_fights']) * 100,
+                0
+            )
+            
+            # Loss vulnerability
+            fighter_stats[f'{method}_vulnerability'] = np.where(
+                fighter_stats['total_UFC_fights'] > 0,
+                (fighter_stats[f'losses_by_{method}'] / fighter_stats['total_UFC_fights']) * 100,
+                0
+            )
+
+        # Strike distribution
         total_strikes_landed = (
             fighter_stats['head_landed'] + 
             fighter_stats['body_landed'] + 
             fighter_stats['leg_landed']
         )
         
-        fighter_stats['head_strike_percentage'] = np.where(
-            total_strikes_landed > 0,
-            (fighter_stats['head_landed'] / total_strikes_landed) * 100,
-            0
-        )
-        
-        fighter_stats['body_strike_percentage'] = np.where(
-            total_strikes_landed > 0,
-            (fighter_stats['body_landed'] / total_strikes_landed) * 100,
-            0
-        )
-        
-        fighter_stats['leg_strike_percentage'] = np.where(
-            total_strikes_landed > 0,
-            (fighter_stats['leg_landed'] / total_strikes_landed) * 100,
-            0
-        )
+        for location in ['head', 'body', 'leg']:
+            fighter_stats[f'{location}_strike_percentage'] = np.where(
+                total_strikes_landed > 0,
+                (fighter_stats[f'{location}_landed'] / total_strikes_landed) * 100,
+                0
+            )
         
         return fighter_stats
-    
+
     def add_fighter_details(self, fighter_stats: pd.DataFrame) -> pd.DataFrame:
-        """
-        Merge aggregated fighter stats with fighter metadata.
-        
-        Parameters:
-            fighter_stats (DataFrame): DataFrame with aggregated fighter statistics.
-        
-        Returns:
-            DataFrame with fighter metadata included.
-        """
+        """Merge with fighter metadata."""
         logger.info("Merging fighter details...")
         
-        # Merge on fighter ID
         complete_fighter_stats = fighter_stats.merge(
             self.fighter_details,
             on=['id', 'name'],
             how='left'
         )
-                
+        
+        # Clean up redundant columns
+        redundant_columns = ['wins', 'losses', 'draws']
+        cols_to_drop = [col for col in redundant_columns if col in complete_fighter_stats.columns]
+        if cols_to_drop:
+            complete_fighter_stats.drop(columns=cols_to_drop, inplace=True)
+        
         return complete_fighter_stats
-    
 
     def process_data(self, save_path: Optional[str] = None) -> pd.DataFrame:
-        """
-        Run the full data processing pipeline.
-        Parameters:
-            save_path (str, optional): If provided, saves the processed data to this path as CSV.
-        Returns:
-            DataFrame with fully processed fighter statistics.
-        """
-        logger.info("Starting full data processing pipeline...")
-        # Load raw data
+        """Run the full processing pipeline."""
+        logger.info("Starting simplified processing pipeline (binary outcomes only)...")
+        
         self.load_raw_data()
-
-        # Spilt data to fighter level from fight level
         fighter_df = self.prepare_fight_level_data()
-
-        # Aggregate data to one row per fighter
         fighter_stats = self.aggregate_fighter_stats(fighter_df)
-
-        # Calculate derived metrics
         fighter_stats = self.calculate_derived_metrics(fighter_stats)
-
-        # Merge with fighter details
         complete_fighter_stats = self.add_fighter_details(fighter_stats)
-
-        # Store processed data
+        
         self.processed_data = complete_fighter_stats
 
-        # Save to CSV if path provided
-        if save_path:
-            try:
-                complete_fighter_stats.to_csv(save_path, index=False)
-                logger.info(f"Processed data saved to {save_path}")
-            except Exception as e:
-                logger.error(f"Error saving processed data: {e}")
-                raise
-        logger.info(f"Processing complete! Final dataset shape: {complete_fighter_stats.shape}")
+        # Validation check
+        total_outcomes = complete_fighter_stats['UFC_wins'] + complete_fighter_stats['UFC_losses']
+        expected_total = complete_fighter_stats['total_UFC_fights']
+        
+        if not (total_outcomes == expected_total).all():
+            logger.warning("Win + Loss doesn't equal total fights for some fighters - check data quality")
+        else:
+            logger.info("✓ Data validation passed: wins + losses = total fights")
 
+        if save_path:
+            complete_fighter_stats.to_csv(save_path, index=False)
+            logger.info(f"Processed data saved to {save_path}")
+            
+        logger.info(f"Processing complete! Final dataset shape: {complete_fighter_stats.shape}")
+        logger.info(f"Excluded rare outcomes to focus on {len(complete_fighter_stats)} fighters with clear win/loss records")
+        
         return complete_fighter_stats
 
-        
 def quick_test():
-    """Quick test function."""
-    print("Testing UFCDataProcessor...")
+    """Test the simplified processor."""
+    print("Testing Simplified UFCDataProcessor...")
     processor = UFCDataProcessor(data_path='data/raw/')
     
     try:
-        processor.load_raw_data()
-        print("✓ Data loading successful!")
-        print(f"✓ Loaded {len(processor.event_details)} events")
-        print(f"✓ Loaded {len(processor.fighter_details)} fighters") 
-        print(f"✓ Loaded {len(processor.fight_details)} fights")
+        complete_data = processor.process_data()
+        method_cols = [col for col in complete_data.columns if 'wins_by_' in col or 'losses_by_' in col]
+        
+        print(f"✓ Complete processing successful!")
+        print(f"✓ Method columns: {method_cols}")
+        print(f"✓ Final dataset shape: {complete_data.shape}")
+        
+        # Show some stats
+        total_wins = complete_data['UFC_wins'].sum()
+        total_losses = complete_data['UFC_losses'].sum()
+        total_fights = complete_data['total_UFC_fights'].sum()
+        
+        print(f"✓ Total fights processed: {total_fights}")
+        print(f"✓ Total wins: {total_wins}, Total losses: {total_losses}")
+        print(f"✓ Win/Loss balance check: {total_wins == total_losses}")
+        
     except Exception as e:
         print(f"✗ Error: {e}")
+        import traceback
+        traceback.print_exc()
 
-    try:
-        fighter_data = processor.prepare_fight_level_data()
-        print(f"✓ Prepared fighter-level data with {len(fighter_data)} records.")
-        print(fighter_data.head())
-    except Exception as e:
-        print(f"✗ Error preparing fighter-level data: {e}")
-
-# Run quick test if this script is executed directly
 if __name__ == "__main__":
     quick_test()
-
-
