@@ -64,6 +64,8 @@ class UFCDataProcessor:
         """
         logger.info("Preparing fight-level data with binary outcomes only...")
 
+        self.fight_details['fight_time_sec'] = self.fight_details.apply(self.calculate_fight_time, axis=1)
+
         # Merge fight details with event details
         fights_with_winners = self.fight_details.merge(
             self.event_details[['winner', 'winner_id', 'fight_id', 'date']],
@@ -110,7 +112,7 @@ class UFCDataProcessor:
         # Clean up columns
         cols_to_drop = [
             'event_name', 'event_id', 'title_fight', 'referee',
-            'winner', 'winneid', 'date', 'finish_round'
+            'winner', 'winneid', 'date', 'total_rounds', 'mathch_time_sec'
         ]
         cols_to_drop = [col for col in cols_to_drop if col in fighter_df.columns]
         fighter_df.drop(cols_to_drop, axis=1, inplace=True)
@@ -141,6 +143,22 @@ class UFCDataProcessor:
         # Everything else (DQ, Could not continue, etc.)
         else:
             return 'other'
+        
+    @staticmethod
+    def calculate_fight_time(row) -> Optional[int]:
+        """Calculate total fight time in seconds based on finish round and match time."""
+        if row['finish_round'] == 1:
+            return row['match_time_sec']
+        elif row['finish_round'] == 2:
+            return 300 + row['match_time_sec']  # 5 minutes = 300 seconds
+        elif row['finish_round'] == 3:
+            return 600 + row['match_time_sec']  # 10 minutes = 600 seconds
+        elif row['finish_round'] == 4:
+            return 900 + row['match_time_sec']  # 15 minutes = 900 seconds
+        elif row['finish_round'] == 5:
+            return 1200 + row['match_time_sec']  # 20 minutes = 1200 seconds
+        else:
+            return np.nan  # Handle unexpected values
 
     def create_method_columns(self, fighter_stats: pd.DataFrame, 
                             wins_by_method: pd.DataFrame, 
@@ -193,8 +211,8 @@ class UFCDataProcessor:
             'loss': 'sum',  # Total losses
             
             # Time-based metrics - sum totals, then can calculate averages later
-            'match_time_sec': 'sum',  # Total fight time in seconds
-            'total_rounds': 'sum',  # Total rounds fought
+            'fight_time_sec': 'sum',  # Total fight time in seconds
+            'finish_round': 'sum',  # Total rounds fought
             
             # Event counts - sum across all fights
             'kd': 'sum',  # Total knockdowns dealt
@@ -256,7 +274,9 @@ class UFCDataProcessor:
         fighter_stats = fighter_stats.rename(columns={
             'fight_id': 'total_UFC_fights',
             'win': 'UFC_wins', 
-            'loss': 'UFC_losses'
+            'loss': 'UFC_losses',
+            'finish_round': 'total_rounds_fought',
+            'fight_time_sec': 'total_fight_time_sec'
         })
         
         logger.info(f"Aggregated data for {len(fighter_stats)} fighters")
@@ -288,25 +308,31 @@ class UFCDataProcessor:
 
         # Per-minute rates
         fighter_stats['sig_st_landed_per_min'] = np.where(
-            fighter_stats['match_time_sec'] > 0,
-            (fighter_stats['sig_stlanded'] / fighter_stats['match_time_sec']) * 60,
+            fighter_stats['total_fight_time_sec'] > 0,
+            (fighter_stats['sig_stlanded'] / fighter_stats['total_fight_time_sec']) * 60,
             0
         )
         
         fighter_stats['td_landed_per_min'] = np.where(
-            fighter_stats['match_time_sec'] > 0,
-            (fighter_stats['td_landed'] / fighter_stats['match_time_sec']) * 60,
+            fighter_stats['total_fight_time_sec'] > 0,
+            (fighter_stats['td_landed'] / fighter_stats['total_fight_time_sec']) * 60,
             0
         )
         
         fighter_stats['kd_per_min'] = np.where(
-            fighter_stats['match_time_sec'] > 0,
-            (fighter_stats['kd'] / fighter_stats['match_time_sec']) * 60,
+            fighter_stats['total_fight_time_sec'] > 0,
+            (fighter_stats['kd'] / fighter_stats['total_fight_time_sec']) * 60,
+            0
+        )
+
+        fighter_stats['ctrl_per_min'] = np.where(
+            fighter_stats['total_fight_time_sec'] > 0,
+            (fighter_stats['ctrl'] / fighter_stats['total_fight_time_sec']) * 60,
             0
         )
 
         # Basic metrics
-        fighter_stats['avg_fight_time_sec'] = fighter_stats['match_time_sec'] / fighter_stats['total_UFC_fights']
+        fighter_stats['avg_fight_time_sec'] = fighter_stats['total_fight_time_sec'] / fighter_stats['total_UFC_fights']
         fighter_stats['win_percentage'] = (fighter_stats['UFC_wins'] / fighter_stats['total_UFC_fights']) * 100
 
         # Finish rates
