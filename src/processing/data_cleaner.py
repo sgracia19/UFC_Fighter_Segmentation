@@ -31,6 +31,24 @@ class DataCleaner:
         logger.info("Data cleaning process completed.")
         return df_cleaned
     
+    def standardize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Fix invalid entries in the DataFrame based on domain knowledge.
+
+        Parameters:
+        df (pd.DataFrame): The DataFrame to process.
+
+        Returns:
+        pd.DataFrame: The DataFrame with invalid entries fixed.
+        """
+        logger.info("Fixing invalid entries.")
+
+        # Replace invalid stances with 'Orthodox'
+        df['stance'] = df['stance'].replace({'Open Stance':'Orthodox', 'Sideways':'Orthodox'})
+
+        logger.info("Fixed {} invalid entries.".format(0))  # Placeholder for actual count
+        return df
+    
     def remove_outliers(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Remove outliers from the DataFrame based on domain-specific thresholds.
