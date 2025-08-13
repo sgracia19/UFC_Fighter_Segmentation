@@ -201,7 +201,6 @@ class PreProcessor:
         # Run pre-processing steps in logical order
         self._standardize_data_types()
         self._calculate_fight_time()
-        #self._calculate_total_strikes()
         self._standardize_methods()
         
         # Handle event data if provided

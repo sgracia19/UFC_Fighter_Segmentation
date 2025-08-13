@@ -35,8 +35,8 @@ class UFCMetricCalculator:
         df = fights_df.copy()
         
         # RED corner - what they absorbed from BLUE corner
-        df['r_strikes_absorbed'] = df['b_sig_stlanded']
-        df['r_total_strikes_absorbed'] = df['b_total_stlanded']
+        df['r_sig_str_absorbed'] = df['b_sig_str_landed']
+        df['r_total_str_absorbed'] = df['b_total_str_landed']
         df['r_takedowns_allowed'] = df['b_td_landed']
         df['r_time_controlled'] = df['b_ctrl']
         df['r_knockdowns_absorbed'] = df['b_kd']
@@ -53,11 +53,11 @@ class UFCMetricCalculator:
         
         # Takedown defense
         df['r_takedowns_defended'] = df['b_td_atmpted'] - df['b_td_landed']
-        df['r_subs_defended'] = df['b_suatt']
+        df['r_subs_defended'] = df['b_sub_att']
         
         # BLUE corner - what they absorbed from RED corner  
-        df['b_strikes_absorbed'] = df['r_sig_stlanded']
-        df['b_total_strikes_absorbed'] = df['r_total_stlanded']
+        df['b_sig_str_absorbed'] = df['r_sig_str_landed']
+        df['b_total_str_absorbed'] = df['r_total_str_landed']
         df['b_takedowns_allowed'] = df['r_td_landed']
         df['b_time_controlled'] = df['r_ctrl']
         df['b_knockdowns_absorbed'] = df['r_kd']
@@ -74,21 +74,20 @@ class UFCMetricCalculator:
         
         # Takedown defense
         df['b_takedowns_defended'] = df['r_td_atmpted'] - df['r_td_landed']
-        df['b_subs_defended'] = df['r_suatt']
+        df['b_subs_defended'] = df['r_sub_att']
         
         # Performance differentials
         df['r_ctrl_differential'] = df['r_ctrl'] - df['b_ctrl']
         df['b_ctrl_differential'] = df['b_ctrl'] - df['r_ctrl']
-        df['r_strike_differential'] = df['r_sig_stlanded'] - df['b_sig_stlanded']
-        df['b_strike_differential'] = df['b_sig_stlanded'] - df['r_sig_stlanded']
+        df['r_str_differential'] = df['r_sig_str_landed'] - df['b_sig_str_landed']
+        df['b_str_differential'] = df['b_sig_str_landed'] - df['r_sig_str_landed']
         
         # Opponent quality indicators
-        df['r_opp_sig_strikes_landed'] = df['b_sig_stlanded']
+        df['r_opp_sig_str_landed'] = df['b_sig_str_landed']
         df['r_opp_takedowns_landed'] = df['b_td_landed']
-        df['b_opp_sig_strikes_landed'] = df['r_sig_stlanded']
+        df['b_opp_sig_str_landed'] = df['r_sig_str_landed']
         df['b_opp_takedowns_landed'] = df['r_td_landed']
         
-        logger.info("Added complementary metrics to fight-level data")
         return df
     
     def get_enhanced_aggregation_dict(self) -> dict:
@@ -108,14 +107,14 @@ class UFCMetricCalculator:
             
             # OFFENSIVE STATS
             'kd': 'sum',
-            'sig_stlanded': 'sum',
-            'sig_statmpted': 'sum',
-            'total_stlanded': 'sum',
-            'total_statmpted': 'sum',
+            'sig_str_landed': 'sum',
+            'sig_str_atmpted': 'sum',
+            'total_str_landed': 'sum',
+            'total_str_atmpted': 'sum',
             'td_landed': 'sum',
             'td_atmpted': 'sum',
             'ctrl': 'sum',
-            'suatt': 'sum',
+            'sub_att': 'sum',
             
             # Strike locations (offensive)
             'head_landed': 'sum', 'head_atmpted': 'sum',
@@ -128,8 +127,8 @@ class UFCMetricCalculator:
             'ground_landed': 'sum', 'ground_atmpted': 'sum',
             
             # DEFENSIVE STATS  
-            'strikes_absorbed': 'sum',
-            'total_strikes_absorbed': 'sum',
+            'sig_str_absorbed': 'sum',
+            'total_str_absorbed': 'sum',
             'takedowns_allowed': 'sum',
             'time_controlled': 'sum',
             'knockdowns_absorbed': 'sum',
@@ -144,10 +143,10 @@ class UFCMetricCalculator:
             
             # Performance differentials
             'ctrl_differential': 'sum',
-            'strike_differential': 'sum',
+            'str_differential': 'sum',
             
             # Opponent quality
-            'opp_sig_strikes_landed': 'sum',
+            'opp_sig_str_landed': 'sum',
             'opp_takedowns_landed': 'sum',
             
             # Fighter metadata
@@ -155,9 +154,79 @@ class UFCMetricCalculator:
             'division': 'last',
         }
     
-    def calculate_defensive_metrics(self, fighter_stats: pd.DataFrame) -> pd.DataFrame:
-        """Calculate all defensive and efficiency metrics."""
-        logger.info("Calculating defensive efficiency metrics...")
+    def calculate_derived_metrics(self, fighter_stats: pd.DataFrame) -> pd.DataFrame:
+        """Calculate derived metrics from aggregated stats."""
+        logger.info("Calculating derived metrics...")
+
+        initial_len = len(fighter_stats.columns)
+
+        # Accuracy percentages
+        accuracy_metrics = [
+            ('career_total_sig_str_acc', 'sig_str_landed', 'sig_str_atmpted'),
+            ('career_total_str_acc', 'total_str_landed', 'total_str_atmpted'),
+            ('career_td_acc', 'td_landed', 'td_atmpted'),
+            ('career_head_acc', 'head_landed', 'head_atmpted'),
+            ('career_body_acc', 'body_landed', 'body_atmpted'),
+            ('career_leg_acc', 'leg_landed', 'leg_atmpted'),
+            ('career_dist_acc', 'dist_landed', 'dist_atmpted'),
+            ('career_clinch_acc', 'clinch_landed', 'clinch_atmpted'),
+            ('career_ground_acc', 'ground_landed', 'ground_atmpted'),
+        ]
+        
+        for acc_name, landed_col, attempted_col in accuracy_metrics:
+            fighter_stats[acc_name] = np.where(
+                fighter_stats[attempted_col] > 0,
+                (fighter_stats[landed_col] / fighter_stats[attempted_col]) * 100,
+                0
+            )
+
+        # Per-minute metrics for standardization of metrics
+        per_min_metrics = [
+            ('str_landed_per_min', 'total_str_landed'),
+            ('td_per_min', 'td_landed'), 
+            ('td_att_per_min', 'td_atmpted'),                  
+            ('kd_per_min', 'kd'),                           
+            ('ctrl_per_min', 'ctrl'),                       
+            ('sig_str_absorbed_per_min', 'sig_str_absorbed'),
+            ('times_knockedown_per_min', 'knockdowns_absorbed'),
+            ('time_controlled_per_min', 'time_controlled')
+        ]
+
+        for per_min_name, metric in per_min_metrics:
+            fighter_stats[per_min_name] = np.where(
+                fighter_stats['total_fight_time_sec'] >0,
+                (fighter_stats[metric] / fighter_stats['total_fight_time_sec']) *60,
+                0
+            )
+
+        # Basic metrics
+        fighter_stats['avg_fight_time_sec'] = fighter_stats['total_fight_time_sec'] / fighter_stats['total_UFC_fights']
+        fighter_stats['win_percentage'] = (fighter_stats['UFC_wins'] / fighter_stats['total_UFC_fights']) * 100
+
+        # Finish rates
+        fighter_stats['finish_rate'] = np.where(
+            fighter_stats['total_UFC_fights'] > 0,
+            ((fighter_stats['wins_by_ko_tko'] + fighter_stats['wins_by_submission']) / 
+             fighter_stats['total_UFC_fights']) * 100,
+            0
+        )
+
+        # Method-specific rates
+        method_categories = ['ko_tko', 'submission', 'decision', 'other']
+        for method in method_categories:
+            # Win rates
+            fighter_stats[f'{method}_win_rate'] = np.where(
+                fighter_stats['total_UFC_fights'] > 0,
+                (fighter_stats[f'wins_by_{method}'] / fighter_stats['total_UFC_fights']) * 100,
+                0
+            )
+            
+            # Loss vulnerability
+            fighter_stats[f'{method}_vulnerability'] = np.where(
+                fighter_stats['total_UFC_fights'] > 0,
+                (fighter_stats[f'losses_by_{method}'] / fighter_stats['total_UFC_fights']) * 100,
+                0
+            )
         
         # Takedown defense percentage
         total_tds_faced = fighter_stats['takedowns_allowed'] + fighter_stats['takedowns_defended']
@@ -166,35 +235,26 @@ class UFCMetricCalculator:
             (fighter_stats['takedowns_defended'] / total_tds_faced) * 100,
             100  # If never faced takedowns, perfect defense
         )
-        
-        # Strike absorption rates
-        fighter_stats['strikes_absorbed_per_min'] = np.where(
-            fighter_stats['total_fight_time_sec'] > 0,
-            (fighter_stats['strikes_absorbed'] / fighter_stats['total_fight_time_sec']) * 60,
-            0
+
+        # Strike distribution
+        total_strikes_landed = (
+            fighter_stats['head_landed'] + 
+            fighter_stats['body_landed'] + 
+            fighter_stats['leg_landed']
         )
         
-        # Knockdown vulnerability
-        fighter_stats['knockdowns_per_fight'] = (
-            fighter_stats['knockdowns_absorbed'] / fighter_stats['total_UFC_fights']
-        )
-        
-        # Control resistance
-        fighter_stats['time_controlled_per_fight'] = (
-            fighter_stats['time_controlled'] / fighter_stats['total_UFC_fights']
-        )
-        
-        return fighter_stats
-    
-    def calculate_efficiency_ratios(self, fighter_stats: pd.DataFrame) -> pd.DataFrame:
-        """Calculate performance efficiency ratios."""
-        logger.info("Calculating efficiency ratios...")
-        
+        for location in ['head', 'body', 'leg']:
+            fighter_stats[f'{location}_str_percentage'] = np.where(
+                total_strikes_landed > 0,
+                (fighter_stats[f'{location}_landed'] / total_strikes_landed) * 100,
+                0
+            )
+
         # Strike efficiency (output vs absorption)
-        fighter_stats['strike_efficiency_ratio'] = np.where(
-            fighter_stats['strikes_absorbed'] > 0,
-            fighter_stats['sig_stlanded'] / fighter_stats['strikes_absorbed'],
-            fighter_stats['sig_stlanded']
+        fighter_stats['str_efficiency_ratio'] = np.where(
+            fighter_stats['sig_str_absorbed'] > 0,
+            fighter_stats['sig_str_landed'] / fighter_stats['sig_str_absorbed'],
+            fighter_stats['sig_str_landed']
         )
         
         # Control dominance (control given vs taken)
@@ -214,17 +274,22 @@ class UFCMetricCalculator:
         # Overall performance differential per minute
         fighter_stats['performance_differential_per_min'] = np.where(
             fighter_stats['total_fight_time_sec'] > 0,
-            (fighter_stats['strike_differential'] + fighter_stats['ctrl_differential']) / 
+            (fighter_stats['str_differential'] + fighter_stats['ctrl_differential']) / 
             (fighter_stats['total_fight_time_sec'] / 60),
             0
         )
-        
-        return fighter_stats
-    
-    def calculate_absorption_percentages(self, fighter_stats: pd.DataFrame) -> pd.DataFrame:
-        """Calculate where fighters absorb damage."""
-        logger.info("Calculating strike absorption patterns...")
-        
+
+        # Knockdown differential (given vs received)
+        fighter_stats['knockdown_differential'] = fighter_stats['kd'] - fighter_stats['knockdowns_absorbed']
+
+        # "Granite chin" metric - ability to avoid knockdowns relative to strikes absorbed
+        fighter_stats['chin_durability'] = np.where(
+            fighter_stats['sig_str_absorbed'] > 0,
+            1 - (fighter_stats['knockdowns_absorbed'] / (fighter_stats['sig_str_absorbed'] / 100)),
+            1
+        )
+
+        # Absorbtion Rates
         total_absorbed = (
             fighter_stats['head_absorbed'] + 
             fighter_stats['body_absorbed'] + 
@@ -252,16 +317,58 @@ class UFCMetricCalculator:
                 (fighter_stats[f'{position}_absorbed'] / total_position_absorbed) * 100,
                 0
             )
-        
+
+
+        # Style and versatility 
+
+        # Fighting range preference (distance vs clinch vs ground)
+        total_strikes = fighter_stats['dist_landed'] + fighter_stats['clinch_landed'] + fighter_stats['ground_landed']
+
+        # Calculate range diversity (higher = more well-rounded)
+        range_proportions = []
+        for pos in ['dist', 'clinch', 'ground']:
+            prop = fighter_stats[f'{pos}_landed'] / total_strikes
+            range_proportions.append(prop)
+
+        # Shannon entropy for style diversity (0 = one-dimensional, higher = more diverse)
+        fighter_stats['style_diversity_index'] = -sum(p * np.log(p + 1e-10) for p in range_proportions)
+
+        # Submission threat level
+        fighter_stats['submission_threat'] = np.where(
+            fighter_stats['ground_landed'] + fighter_stats['td_landed'] > 0,
+            fighter_stats['sub_att'] / (fighter_stats['ground_landed'] + fighter_stats['td_landed']),
+            0
+        )
+
+        # "Power" efficiency - knockdowns per significant strike
+        fighter_stats['power_efficiency'] = np.where(
+            fighter_stats['sig_str_landed'] > 0,
+            fighter_stats['kd'] / fighter_stats['sig_str_landed'],
+            0
+        )
+
+        # Control fighter variable
+        fighter_stats['ctr_time_per_td_atmpt'] = np.where(
+            fighter_stats['td_atmpted'] > 0,
+            fighter_stats['ctrl'] / fighter_stats['td_atmpted'],  # Control time per takedown attempt
+            0
+        )
+
+        # Submission efficiency
+        fighter_stats['submission_conversion_rate'] = np.where(
+            fighter_stats['sub_att'] > 0,
+            fighter_stats['wins_by_submission'] / fighter_stats['sub_att'] * 100,
+            0
+        )
+
+        new_len = len(fighter_stats.columns)
+
+        logger.info(f"Added {new_len - initial_len} new fight metric columns")
         return fighter_stats
     
     def calculate_all_metrics(self, fighter_stats: pd.DataFrame) -> pd.DataFrame:
-        """Run all metric calculations in sequence."""
-        logger.info("Calculating all enhanced metrics...")
-        
-        fighter_stats = self.calculate_defensive_metrics(fighter_stats)
-        fighter_stats = self.calculate_efficiency_ratios(fighter_stats)
-        fighter_stats = self.calculate_absorption_percentages(fighter_stats)
+        """Run metric calculations """        
+        fighter_stats = self.calculate_derived_metrics(fighter_stats)
         
         logger.info("All metric calculations complete")
         return fighter_stats

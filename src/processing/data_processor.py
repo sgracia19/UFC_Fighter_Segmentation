@@ -9,7 +9,8 @@ import pandas as pd
 import numpy as np
 from typing import Tuple, Optional
 import logging
-from pre_processor import PreProcessor # Data PreProcessor
+from .pre_processor import PreProcessor # Data PreProcessor
+from .metric_calculator import UFCMetricCalculator # Adding Metrics
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,6 +30,9 @@ class UFCDataProcessor:
         self.fighter_details = None
         self.fight_details = None
         self.processed_data = None
+
+        # Intitialize metric calculator
+        self.metric_calculator = UFCMetricCalculator()
         
         # Simplified method categories
         self.method_categories = [
@@ -50,6 +54,9 @@ class UFCDataProcessor:
             # Preprocess the data
             preprocessor = PreProcessor(self.fight_details, self.event_details)
             self.fight_details = preprocessor.pre_process_data()
+
+            # Add strikes absorbed to fight_details
+            self.fight_details = self.metric_calculator.add_complementary_metrics(self.fight_details)
             
             logger.info(f"Data preprocessing completed. {len(self.fight_details)} fights ready for processing")
             
@@ -104,7 +111,7 @@ class UFCDataProcessor:
         # Clean up unnecessary columns
         cols_to_drop = [
             'event_name', 'event_id', 'title_fight', 'referee',
-            'winner', 'winneid', 'date', 'total_rounds'
+            'winner', 'winner_id', 'date', 'total_rounds'
         ]
         existing_cols_to_drop = [col for col in cols_to_drop if col in fighter_df.columns]
         if existing_cols_to_drop:
@@ -160,59 +167,8 @@ class UFCDataProcessor:
         # Debug info
         logger.info(f"Method categories found: {df_copy['method_category'].unique()}")
 
-        # Aggregation dictionary
-        agg_dict = {
-            # Basic fight information
-            'fight_id': 'count',  # Total number of fights
-            'win': 'sum',  # Total wins
-            'loss': 'sum',  # Total losses
-            
-            # Time-based metrics - sum totals, then can calculate averages later
-            'fight_time_sec': 'sum',  # Total fight time in seconds
-            'finish_round': 'sum',  # Total rounds fought
-            
-            # Event counts - sum across all fights
-            'kd': 'sum',  # Total knockdowns dealt
-            
-            # Strike totals - sum for career totals
-            'sig_str_landed': 'sum', # Significant Strikes landed
-            'sig_str_atmpted': 'sum', # Significant Strikes landed
-            'total_str_landed': 'sum',  # Total strikes landed
-            'total_str_atmpted': 'sum',  # Total strikes attempted
-            
-            # Takedown totals - sum for career totals
-            'td_landed': 'sum',  # Total takedowns landed
-            'td_atmpted': 'sum',  # Total takedowns attempted
-            
-            # Control time - sum for total career control time
-            'ctrl': 'sum',  # Total control time
-            
-            # Strike location totals - sum for career totals
-            'head_landed': 'sum',
-            'head_atmpted': 'sum',
-            'body_landed': 'sum',
-            'body_atmpted': 'sum',
-            'leg_landed': 'sum',
-            'leg_atmpted': 'sum',
-            
-            # Strike position totals - sum for career totals
-            'dist_landed': 'sum',  # Distance strikes landed
-            'dist_atmpted': 'sum',  # Distance strikes attempted
-            'clinch_landed': 'sum',  # Clinch strikes landed
-            'clinch_atmpted': 'sum',  # Clinch strikes attempted
-            'ground_landed': 'sum',  # Ground strikes landed
-            'ground_atmpted': 'sum',  # Ground strikes attempted
-            
-            # Submission attempts
-            'sub_att': 'sum',  # Total submission attempts
-            
-            # Percentages and accuracy - we'll recalculate these from totals
-            # Don't aggregate the existing percentage columns directly as they're per-fight
-            
-            # Keep fighter metadata (take first occurrence)
-            'name': 'first',
-            'division': 'last',  # Use last in case fighter changed divisions
-        }
+        # Aggregation dictionary from metric calculator
+        agg_dict = self.metric_calculator.get_enhanced_aggregation_dict()
 
         # Group by fighter and aggregate
         fighter_stats = df_copy.groupby('id').agg(agg_dict).reset_index()
@@ -237,100 +193,6 @@ class UFCDataProcessor:
         })
         
         logger.info(f"Aggregated data for {len(fighter_stats)} fighters")
-        return fighter_stats
-
-    def calculate_derived_metrics(self, fighter_stats: pd.DataFrame) -> pd.DataFrame:
-        """Calculate derived metrics from aggregated stats."""
-        logger.info("Calculating derived metrics...")
-
-        # Accuracy percentages
-        accuracy_metrics = [
-            ('career_total_sig_str_acc', 'sig_str_landed', 'sig_str_atmpted'),
-            ('career_total_str_acc', 'total_str_landed', 'total_str_atmpted'),
-            ('career_td_acc', 'td_landed', 'td_atmpted'),
-            ('career_head_acc', 'head_landed', 'head_atmpted'),
-            ('career_body_acc', 'body_landed', 'body_atmpted'),
-            ('career_leg_acc', 'leg_landed', 'leg_atmpted'),
-            ('career_dist_acc', 'dist_landed', 'dist_atmpted'),
-            ('career_clinch_acc', 'clinch_landed', 'clinch_atmpted'),
-            ('career_ground_acc', 'ground_landed', 'ground_atmpted'),
-        ]
-        
-        for acc_name, landed_col, attempted_col in accuracy_metrics:
-            fighter_stats[acc_name] = np.where(
-                fighter_stats[attempted_col] > 0,
-                (fighter_stats[landed_col] / fighter_stats[attempted_col]) * 100,
-                0
-            )
-
-        # Per-minute rates
-        fighter_stats['str_landed_per_min'] = np.where(
-            fighter_stats['total_fight_time_sec'] > 0,
-            (fighter_stats['total_str_landed'] / fighter_stats['total_fight_time_sec']) * 60,
-            0
-        )
-        
-        fighter_stats['td_landed_per_min'] = np.where(
-            fighter_stats['total_fight_time_sec'] > 0,
-            (fighter_stats['td_landed'] / fighter_stats['total_fight_time_sec']) * 60,
-            0
-        )
-        
-        fighter_stats['kd_per_min'] = np.where(
-            fighter_stats['total_fight_time_sec'] > 0,
-            (fighter_stats['kd'] / fighter_stats['total_fight_time_sec']) * 60,
-            0
-        )
-
-        fighter_stats['ctrl_per_min'] = np.where(
-            fighter_stats['total_fight_time_sec'] > 0,
-            (fighter_stats['ctrl'] / fighter_stats['total_fight_time_sec']) * 60,
-            0
-        )
-
-        # Basic metrics
-        fighter_stats['avg_fight_time_sec'] = fighter_stats['total_fight_time_sec'] / fighter_stats['total_UFC_fights']
-        fighter_stats['win_percentage'] = (fighter_stats['UFC_wins'] / fighter_stats['total_UFC_fights']) * 100
-
-        # Finish rates
-        fighter_stats['finish_rate'] = np.where(
-            fighter_stats['total_UFC_fights'] > 0,
-            ((fighter_stats['wins_by_ko_tko'] + fighter_stats['wins_by_submission']) / 
-             fighter_stats['total_UFC_fights']) * 100,
-            0
-        )
-
-        # Method-specific rates
-        method_categories = ['ko_tko', 'submission', 'decision', 'other']
-        for method in method_categories:
-            # Win rates
-            fighter_stats[f'{method}_win_rate'] = np.where(
-                fighter_stats['total_UFC_fights'] > 0,
-                (fighter_stats[f'wins_by_{method}'] / fighter_stats['total_UFC_fights']) * 100,
-                0
-            )
-            
-            # Loss vulnerability
-            fighter_stats[f'{method}_vulnerability'] = np.where(
-                fighter_stats['total_UFC_fights'] > 0,
-                (fighter_stats[f'losses_by_{method}'] / fighter_stats['total_UFC_fights']) * 100,
-                0
-            )
-
-        # Strike distribution
-        total_strikes_landed = (
-            fighter_stats['head_landed'] + 
-            fighter_stats['body_landed'] + 
-            fighter_stats['leg_landed']
-        )
-        
-        for location in ['head', 'body', 'leg']:
-            fighter_stats[f'{location}_strike_percentage'] = np.where(
-                total_strikes_landed > 0,
-                (fighter_stats[f'{location}_landed'] / total_strikes_landed) * 100,
-                0
-            )
-        
         return fighter_stats
 
     def add_fighter_details(self, fighter_stats: pd.DataFrame) -> pd.DataFrame:
@@ -358,7 +220,8 @@ class UFCDataProcessor:
         self.load_raw_data()
         fighter_df = self.prepare_fight_level_data()
         fighter_stats = self.aggregate_fighter_stats(fighter_df)
-        fighter_stats = self.calculate_derived_metrics(fighter_stats)
+        # fighter_stats = self.calculate_derived_metrics(fighter_stats)
+        fighter_stats = self.metric_calculator.calculate_derived_metrics(fighter_stats)
         complete_fighter_stats = self.add_fighter_details(fighter_stats)
         
         self.processed_data = complete_fighter_stats
