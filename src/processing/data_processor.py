@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 from typing import Tuple, Optional
 import logging
+from pre_processor import PreProcessor # Data PreProcessor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -46,127 +47,84 @@ class UFCDataProcessor:
             logger.info("Data loaded successfully. {} events, {} fighters, {} fights.".format(
                 len(self.event_details), len(self.fighter_details), len(self.fight_details)))
             
-            # Log how many null winner_ids we have
-            null_winners = self.event_details['winner_id'].isna().sum()
-            total_fights = len(self.event_details)
-            logger.info(f"Found {null_winners} fights ({null_winners/total_fights*100:.2f}%) with null winner_id - these will be excluded")
+            # Preprocess the data
+            preprocessor = PreProcessor(self.fight_details, self.event_details)
+            self.fight_details = preprocessor.pre_process_data()
+            
+            logger.info(f"Data preprocessing completed. {len(self.fight_details)} fights ready for processing")
             
         except Exception as e:
-            logger.error(f"Error loading data files: {e}")
+            logger.error(f"Error loading/preprocessing data files: {e}")
             raise
 
     def prepare_fight_level_data(self) -> pd.DataFrame:
-        """ 
-        Transform fight data from red/blue corner format to fighter-level records.
+        """
+        Transform preprocessed fight data from red/blue corner format to fighter-level records.
         
         Returns:
             DataFrame with one row per fighter per fight
         """
-        logger.info("Preparing fight-level data with binary outcomes only...")
+        logger.info("Preparing fight-level data from preprocessed inputs...")
 
-        self.fight_details['fight_time_sec'] = self.fight_details.apply(self.calculate_fight_time, axis=1)
-
-        # Merge fight details with event details
-        fights_with_winners = self.fight_details.merge(
-            self.event_details[['winner', 'winner_id', 'fight_id', 'date']],
-            on='fight_id'
+        # Create binary win/loss indicators (business logic - stays in main processor)
+        self.fight_details['r_win'] = np.where(
+            self.fight_details['winner_id'] == self.fight_details['r_id'], 1, 0
         )
+        self.fight_details['b_win'] = np.where(
+            self.fight_details['winner_id'] == self.fight_details['b_id'], 1, 0
+        )
+        self.fight_details['r_loss'] = np.where(
+            self.fight_details['winner_id'] == self.fight_details['b_id'], 1, 0
+        )
+        self.fight_details['b_loss'] = np.where(
+            self.fight_details['winner_id'] == self.fight_details['r_id'], 1, 0
+        )
+
+        # Identify column categories
+        all_cols = set(self.fight_details.columns)
+        red_cols = {col for col in all_cols if col.startswith('r_')}
+        blue_cols = {col for col in all_cols if col.startswith('b_')}
+        shared_cols = all_cols - red_cols - blue_cols
         
-        # Filter out fights with no clear winner (null winner_id)
-        initial_count = len(fights_with_winners)
-        fights_with_winners = fights_with_winners[fights_with_winners['winner_id'].notna()]
-        excluded_count = initial_count - len(fights_with_winners)
-        
-        logger.info(f"Excluded {excluded_count} fights with non-binary outcomes (draws/no contests/etc.)")
+        logger.info(f"Found {len(red_cols)} red columns, {len(blue_cols)} blue columns, {len(shared_cols)} shared columns")
 
-        # Create binary win/loss indicators
-        fights_with_winners['r_win'] = np.where(
-            fights_with_winners['winner_id'] == fights_with_winners['r_id'], 1, 0
-        )
-        fights_with_winners['b_win'] = np.where(
-            fights_with_winners['winner_id'] == fights_with_winners['b_id'], 1, 0
-        )
-        fights_with_winners['r_loss'] = np.where(
-            fights_with_winners['winner_id'] == fights_with_winners['b_id'], 1, 0
-        )
-        fights_with_winners['b_loss'] = np.where(
-            fights_with_winners['winner_id'] == fights_with_winners['r_id'], 1, 0
-        )
+        # Create separate dataframes for each corner
+        red_fighter_df = self.fight_details[list(red_cols) + list(shared_cols)].copy()
+        blue_fighter_df = self.fight_details[list(blue_cols) + list(shared_cols)].copy()
 
-        # Split into red and blue corner dataframes
-        red_fighter_df = fights_with_winners.drop(columns=[
-            col for col in fights_with_winners.columns if 'b_' in col
-        ])
-        blue_fighter_df = fights_with_winners.drop(columns=[
-            col for col in fights_with_winners.columns if 'r_' in col
-        ])
+        # Remove prefixes to standardize column names
+        red_fighter_df.rename(columns={col: col[2:] if col.startswith('r_') else col 
+                                    for col in red_fighter_df.columns}, inplace=True)
+        blue_fighter_df.rename(columns={col: col[2:] if col.startswith('b_') else col 
+                                    for col in blue_fighter_df.columns}, inplace=True)
 
-        # Rename columns
-        red_fighter_df.columns = [col.replace('r_', '') for col in red_fighter_df.columns]
-        blue_fighter_df.columns = [col.replace('b_', '') for col in blue_fighter_df.columns]
-
-        # Combine datasets
+        # Combine red and blue fighter records
         fighter_df = pd.concat([red_fighter_df, blue_fighter_df], ignore_index=True)
-        fighter_df = fighter_df.loc[:, ~fighter_df.columns.duplicated()]
 
-        # Clean up columns
+        # Clean up unnecessary columns
         cols_to_drop = [
             'event_name', 'event_id', 'title_fight', 'referee',
-            'winner', 'winneid', 'date', 'total_rounds', 'mathch_time_sec'
+            'winner', 'winneid', 'date', 'total_rounds'
         ]
-        cols_to_drop = [col for col in cols_to_drop if col in fighter_df.columns]
-        fighter_df.drop(cols_to_drop, axis=1, inplace=True)
+        existing_cols_to_drop = [col for col in cols_to_drop if col in fighter_df.columns]
+        if existing_cols_to_drop:
+            fighter_df.drop(columns=existing_cols_to_drop, inplace=True)
+            logger.info(f"Dropped {len(existing_cols_to_drop)} unnecessary columns")
 
-        logger.info(f"Prepared fighter-level data with {len(fighter_df)} records from binary outcomes")
+        logger.info(f"✓ Prepared fighter-level data: {len(fighter_df)} records, {len(fighter_df.columns)} columns")
+        
         return fighter_df
-
-    @staticmethod
-    def categorize_method(method: str) -> str:
-        """Simplified method categorization focusing on main finish types."""
-        if pd.isna(method):
-            return 'other'
-        
-        method = str(method).strip().lower()
-
-        # KO/TKO category (including all stoppages)
-        if any(x in method for x in ['ko', 'tko', 'doctor', 'stoppage']):
-            return 'ko_tko'
-        
-        # Submission category
-        elif 'submission' in method:
-            return 'submission'
-        
-        # Decision category (all types)
-        elif 'decision' in method:
-            return 'decision'
-        
-        # Everything else (DQ, Could not continue, etc.)
-        else:
-            return 'other'
-        
-    @staticmethod
-    def calculate_fight_time(row) -> Optional[int]:
-        """Calculate total fight time in seconds based on finish round and match time."""
-        if row['finish_round'] == 1:
-            return row['match_time_sec']
-        elif row['finish_round'] == 2:
-            return 300 + row['match_time_sec']  # 5 minutes = 300 seconds
-        elif row['finish_round'] == 3:
-            return 600 + row['match_time_sec']  # 10 minutes = 600 seconds
-        elif row['finish_round'] == 4:
-            return 900 + row['match_time_sec']  # 15 minutes = 900 seconds
-        elif row['finish_round'] == 5:
-            return 1200 + row['match_time_sec']  # 20 minutes = 1200 seconds
-        else:
-            return np.nan  # Handle unexpected values
-
+    
     def create_method_columns(self, fighter_stats: pd.DataFrame, 
                             wins_by_method: pd.DataFrame, 
                             losses_by_method: pd.DataFrame) -> pd.DataFrame:
         """Ensure all method categories have corresponding win/loss columns."""
         logger.info("Creating method columns...")
         
-        for category in self.method_categories:
+        # Method categories now come from preprocessing
+        method_categories = ['ko_tko', 'submission', 'decision', 'other']
+        
+        for category in method_categories:
             win_col = f'wins_by_{category}'
             loss_col = f'losses_by_{category}'
             
@@ -198,7 +156,6 @@ class UFCDataProcessor:
         
         # Add method categories
         df_copy = fighter_df.copy()
-        df_copy['method_category'] = df_copy['method'].apply(self.categorize_method)
         
         # Debug info
         logger.info(f"Method categories found: {df_copy['method_category'].unique()}")
@@ -218,10 +175,10 @@ class UFCDataProcessor:
             'kd': 'sum',  # Total knockdowns dealt
             
             # Strike totals - sum for career totals
-            'sig_stlanded': 'sum',  # Total significant strikes landed
-            'sig_statmpted': 'sum',  # Total significant strikes attempted
-            'total_stlanded': 'sum',  # Total strikes landed
-            'total_statmpted': 'sum',  # Total strikes attempted
+            'sig_str_landed': 'sum', # Significant Strikes landed
+            'sig_str_atmpted': 'sum', # Significant Strikes landed
+            'total_str_landed': 'sum',  # Total strikes landed
+            'total_str_atmpted': 'sum',  # Total strikes attempted
             
             # Takedown totals - sum for career totals
             'td_landed': 'sum',  # Total takedowns landed
@@ -247,7 +204,7 @@ class UFCDataProcessor:
             'ground_atmpted': 'sum',  # Ground strikes attempted
             
             # Submission attempts
-            'suatt': 'sum',  # Total submission attempts
+            'sub_att': 'sum',  # Total submission attempts
             
             # Percentages and accuracy - we'll recalculate these from totals
             # Don't aggregate the existing percentage columns directly as they're per-fight
@@ -288,8 +245,8 @@ class UFCDataProcessor:
 
         # Accuracy percentages
         accuracy_metrics = [
-            ('career_sig_st_acc', 'sig_stlanded', 'sig_statmpted'),
-            ('career_total_st_acc', 'total_stlanded', 'total_statmpted'),
+            ('career_total_sig_str_acc', 'sig_str_landed', 'sig_str_atmpted'),
+            ('career_total_str_acc', 'total_str_landed', 'total_str_atmpted'),
             ('career_td_acc', 'td_landed', 'td_atmpted'),
             ('career_head_acc', 'head_landed', 'head_atmpted'),
             ('career_body_acc', 'body_landed', 'body_atmpted'),
@@ -307,9 +264,9 @@ class UFCDataProcessor:
             )
 
         # Per-minute rates
-        fighter_stats['sig_st_landed_per_min'] = np.where(
+        fighter_stats['str_landed_per_min'] = np.where(
             fighter_stats['total_fight_time_sec'] > 0,
-            (fighter_stats['sig_stlanded'] / fighter_stats['total_fight_time_sec']) * 60,
+            (fighter_stats['total_str_landed'] / fighter_stats['total_fight_time_sec']) * 60,
             0
         )
         
@@ -344,7 +301,8 @@ class UFCDataProcessor:
         )
 
         # Method-specific rates
-        for method in self.method_categories:
+        method_categories = ['ko_tko', 'submission', 'decision', 'other']
+        for method in method_categories:
             # Win rates
             fighter_stats[f'{method}_win_rate'] = np.where(
                 fighter_stats['total_UFC_fights'] > 0,
