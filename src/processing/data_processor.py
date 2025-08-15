@@ -57,9 +57,7 @@ class UFCDataProcessor:
 
             # Add strikes absorbed to fight_details
             self.fight_details = self.metric_calculator.add_complementary_metrics(self.fight_details)
-            
-            logger.info(f"Data preprocessing completed. {len(self.fight_details)} fights ready for processing")
-            
+                        
         except Exception as e:
             logger.error(f"Error loading/preprocessing data files: {e}")
             raise
@@ -163,9 +161,6 @@ class UFCDataProcessor:
         
         # Add method categories
         df_copy = fighter_df.copy()
-        
-        # Debug info
-        logger.info(f"Method categories found: {df_copy['method_category'].unique()}")
 
         # Aggregation dictionary from metric calculator
         agg_dict = self.metric_calculator.get_enhanced_aggregation_dict()
@@ -215,7 +210,7 @@ class UFCDataProcessor:
 
     def process_data(self, save_path: Optional[str] = None) -> pd.DataFrame:
         """Run the full processing pipeline."""
-        logger.info("Starting simplified processing pipeline (binary outcomes only)...")
+        logger.info("Starting processing pipeline...")
         
         self.load_raw_data()
         fighter_df = self.prepare_fight_level_data()
@@ -240,7 +235,6 @@ class UFCDataProcessor:
             logger.info(f"Processed data saved to {save_path}")
             
         logger.info(f"Processing complete! Final dataset shape: {complete_fighter_stats.shape}")
-        logger.info(f"Excluded rare outcomes to focus on {len(complete_fighter_stats)} fighters with clear win/loss records")
         
         return complete_fighter_stats
 

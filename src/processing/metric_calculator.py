@@ -30,7 +30,7 @@ class UFCMetricCalculator:
         Returns:
         pd.DataFrame: Enhanced fight data with complementary metrics
         """
-        logger.info("Adding complementary defensive metrics...")
+        logger.info("Addingn complementary fight metrics...")
         
         df = fights_df.copy()
         
