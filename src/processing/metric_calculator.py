@@ -30,7 +30,7 @@ class UFCMetricCalculator:
         Returns:
         pd.DataFrame: Enhanced fight data with complementary metrics
         """
-        logger.info("Addingn complementary fight metrics...")
+        logger.info("Adding complementary fight metrics...")
         
         df = fights_df.copy()
         
@@ -100,6 +100,7 @@ class UFCMetricCalculator:
             'fight_id': 'count',
             'win': 'sum',
             'loss': 'sum',
+            'date': 'last',
             
             # Time-based metrics
             'fight_time_sec': 'sum',

@@ -42,8 +42,6 @@ class PreProcessor:
         # Method categories for standardization
         self.method_categories = ['ko_tko', 'submission', 'decision', 'other']
         
-        logger.info(f"PreProcessor initialized with {len(self.fight_details)} fights")
-
     def _calculate_fight_time(self) -> None:
         """Calculate correct total fight time in seconds."""
         logger.info("Calculating fight time corrections...")
@@ -56,8 +54,6 @@ class PreProcessor:
         # Drop the problematic column if it exists
         if 'match_time_sec' in self.fight_details.columns:
             self.fight_details.drop(columns=['match_time_sec'], inplace=True)
-            logger.info("Dropped 'match_time_sec' column")
-
 
     @staticmethod
     def _calculate_fight_time_helper(row) -> Optional[int]:
@@ -92,10 +88,10 @@ class PreProcessor:
 
     def _standardize_methods(self) -> None:
         """Standardize fight method categories."""
-        logger.info("Standardizing fight methods...")
+        logger.debug("Standardizing fight methods...")
         
         self.fight_details['method_category'] = self.fight_details['method'].apply(self._categorize_method)
-        logger.info(f"Method categories: {self.fight_details['method_category'].value_counts().to_dict()}")
+        logger.debug(f"Method categories: {self.fight_details['method_category'].value_counts().to_dict()}")
 
     @staticmethod
     def _categorize_method(method: str) -> str:
@@ -126,9 +122,7 @@ class PreProcessor:
         if self.event_details is None:
             logger.warning("No event details provided - skipping winner validation")
             return
-            
-        logger.info("Merging event details and validating winners...")
-        
+                    
         # Merge with event details
         initial_count = len(self.fight_details)
         self.fight_details = self.fight_details.merge(
@@ -144,7 +138,6 @@ class PreProcessor:
         self.fight_details = fights_with_winners
         
         logger.info(f"Excluded {excluded_count} fights with non-binary outcomes (draws/no contests/etc.)")
-        logger.info(f"Retained {len(self.fight_details)} fights with clear winners")
 
     def _standardize_data_types(self) -> None:
         """Fix data types and standardize problematic values."""
@@ -157,12 +150,8 @@ class PreProcessor:
         for col in numeric_cols:
             if col in self.fight_details.columns:
                 self.fight_details[col] = pd.to_numeric(self.fight_details[col], errors='coerce')
-        
-        # Handle any specific value standardizations
-        # (You can add specific fixes here based on your EDA findings)
-        
-        logger.info("Data type standardization completed")
 
+        
     def _validate_data(self) -> None:
         """Perform basic data validation checks."""
         logger.info("Performing data validation...")
@@ -193,9 +182,7 @@ class PreProcessor:
         
         Returns:
         pd.DataFrame: Pre-processed fight details data
-        """
-        logger.info("Starting pre-processing pipeline...")
-        
+        """        
         original_shape = self.fight_details.shape
         
         # Run pre-processing steps in logical order

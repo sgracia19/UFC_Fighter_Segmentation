@@ -45,6 +45,7 @@ class UFCDataProcessor:
         """Load raw data files into pandas DataFrames."""
         try:
             self.event_details = pd.read_csv(f"{self.data_path}event_details.csv", low_memory=False)
+            self.event_details['date'] = pd.to_datetime(self.event_details['date'])
             self.fighter_details = pd.read_csv(f"{self.data_path}fighter_details.csv", low_memory=False)
             self.fight_details = pd.read_csv(f"{self.data_path}fight_details.csv", low_memory=False)
             
@@ -91,7 +92,7 @@ class UFCDataProcessor:
         blue_cols = {col for col in all_cols if col.startswith('b_')}
         shared_cols = all_cols - red_cols - blue_cols
         
-        logger.info(f"Found {len(red_cols)} red columns, {len(blue_cols)} blue columns, {len(shared_cols)} shared columns")
+        logger.debug(f"Found {len(red_cols)} red columns, {len(blue_cols)} blue columns, {len(shared_cols)} shared columns")
 
         # Create separate dataframes for each corner
         red_fighter_df = self.fight_details[list(red_cols) + list(shared_cols)].copy()
@@ -109,12 +110,12 @@ class UFCDataProcessor:
         # Clean up unnecessary columns
         cols_to_drop = [
             'event_name', 'event_id', 'title_fight', 'referee',
-            'winner', 'winner_id', 'date', 'total_rounds'
+            'winner', 'winner_id', 'total_rounds'
         ]
         existing_cols_to_drop = [col for col in cols_to_drop if col in fighter_df.columns]
         if existing_cols_to_drop:
             fighter_df.drop(columns=existing_cols_to_drop, inplace=True)
-            logger.info(f"Dropped {len(existing_cols_to_drop)} unnecessary columns")
+            logger.debug(f"Dropped {len(existing_cols_to_drop)} unnecessary columns")
 
         logger.info(f"✓ Prepared fighter-level data: {len(fighter_df)} records, {len(fighter_df.columns)} columns")
         
@@ -124,7 +125,7 @@ class UFCDataProcessor:
                             wins_by_method: pd.DataFrame, 
                             losses_by_method: pd.DataFrame) -> pd.DataFrame:
         """Ensure all method categories have corresponding win/loss columns."""
-        logger.info("Creating method columns...")
+        logger.debug("Creating method columns...")
         
         # Method categories now come from preprocessing
         method_categories = ['ko_tko', 'submission', 'decision', 'other']
@@ -184,7 +185,8 @@ class UFCDataProcessor:
             'win': 'UFC_wins', 
             'loss': 'UFC_losses',
             'finish_round': 'total_rounds_fought',
-            'fight_time_sec': 'total_fight_time_sec'
+            'fight_time_sec': 'total_fight_time_sec',
+            'date' : 'last_fight'
         })
         
         logger.info(f"Aggregated data for {len(fighter_stats)} fighters")
@@ -192,7 +194,7 @@ class UFCDataProcessor:
 
     def add_fighter_details(self, fighter_stats: pd.DataFrame) -> pd.DataFrame:
         """Merge with fighter metadata."""
-        logger.info("Merging fighter details...")
+        logger.debug("Merging fighter details...")
         
         complete_fighter_stats = fighter_stats.merge(
             self.fighter_details,
@@ -210,7 +212,7 @@ class UFCDataProcessor:
 
     def process_data(self, save_path: Optional[str] = None) -> pd.DataFrame:
         """Run the full processing pipeline."""
-        logger.info("Starting processing pipeline...")
+        logger.debug("Starting processing pipeline...")
         
         self.load_raw_data()
         fighter_df = self.prepare_fight_level_data()
