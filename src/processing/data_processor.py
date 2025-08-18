@@ -39,7 +39,7 @@ class UFCDataProcessor:
             'ko_tko', 'submission', 'decision', 'other'
         ]
         
-        logger.info(f"DataProcessor initialized with data path: {data_path}")
+        logger.debug(f"DataProcessor initialized with data path: {data_path}")
 
     def load_raw_data(self) -> None:
         """Load raw data files into pandas DataFrames."""
