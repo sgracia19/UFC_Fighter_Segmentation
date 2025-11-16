@@ -83,7 +83,7 @@ def load_and_process_ufc_data(raw_data_path: str = None,
         raw_data.to_csv(raw_file, index=False)
         clean_data.to_csv(clean_file, index=False)
     
-    logger.info(f"Processing complete! {len(clean_data)} fighters ready for analysis")
+    logger.info(f"Processing complete {len(clean_data)} fighters ready for analysis")
     return raw_data, clean_data
 
 def get_clean_data(raw_data_path: str = None,
@@ -183,4 +183,4 @@ if __name__ == "__main__":
         data = get_clean_data()
     
     print(f"Dataset: {data.shape[0]} fighters, {data.shape[1]} features")
-    print(f"Ready for analysis!")
+    print(f"Ready for analysis")
