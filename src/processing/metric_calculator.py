@@ -184,6 +184,7 @@ class UFCMetricCalculator:
         # Per-minute metrics for standardization of metrics
         per_min_metrics = [
             ('str_landed_per_min', 'total_str_landed'),
+            ('str_att_per_min','total_str_atmpted'),
             ('td_per_min', 'td_landed'), 
             ('td_att_per_min', 'td_atmpted'),                  
             ('kd_per_min', 'kd'),                           
